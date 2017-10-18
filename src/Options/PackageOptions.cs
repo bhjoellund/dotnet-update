@@ -1,6 +1,6 @@
 using CommandLine;
 
-namespace Hjoellund.DotNet.Cli.Update
+namespace Hjoellund.DotNet.Cli.Update.Options
 {
     internal class PackageOptions
     {

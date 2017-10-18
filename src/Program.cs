@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using CommandLine;
+using Hjoellund.DotNet.Cli.Update.Models;
+using Hjoellund.DotNet.Cli.Update.Options;
 using Microsoft.DotNet.Cli.Utils;
 using NuGet.Common;
 using NuGet.Configuration;

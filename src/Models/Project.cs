@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using System.Xml.Linq;
 using NuGet.Versioning;
 
-namespace Hjoellund.DotNet.Cli.Update
+namespace Hjoellund.DotNet.Cli.Update.Models
 {
     internal class Project
     {

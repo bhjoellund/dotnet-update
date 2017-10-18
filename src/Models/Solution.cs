@@ -5,7 +5,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
-namespace Hjoellund.DotNet.Cli.Update
+namespace Hjoellund.DotNet.Cli.Update.Models
 {
     internal class Solution
     {

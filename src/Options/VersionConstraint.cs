@@ -1,4 +1,4 @@
-namespace Hjoellund.DotNet.Cli.Update
+namespace Hjoellund.DotNet.Cli.Update.Options
 {
     internal enum VersionConstraint
     {
