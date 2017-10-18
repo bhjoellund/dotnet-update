@@ -4,11 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Xml.Linq;
+using CommandLine;
 using Microsoft.DotNet.Cli.Utils;
 using NuGet.Common;
 using NuGet.Configuration;
-using NuGet.Frameworks;
 using NuGet.Protocol;
 using NuGet.Protocol.Core.Types;
 using NuGet.Versioning;
@@ -19,58 +18,69 @@ namespace Hjoellund.DotNet.Cli.Update
     {
         static async Task Main(string[] args)
         {
+            var parser = new Parser(ps => {
+                ps.CaseInsensitiveEnumValues = true;
+                ps.CaseSensitive = true;
+                ps.HelpWriter = Console.Error;
+                ps.IgnoreUnknownArguments = false;
+            });
+            switch(parser.ParseArguments<PackageOptions>(args))
+            {
+                case NotParsed<PackageOptions> notParsed:
+                    CommandLine.Text.HelpText.AutoBuild(notParsed);
+                    break;
+                case Parsed<PackageOptions> parsed:
+                    await CheckForUpdates(parsed.Value);
+                    break;
+            }
+        }
+
+        private static async Task CheckForUpdates(PackageOptions options)
+        {
             try
             {
-                var (usePrerelease, path) = ParseArguments(args);
-
-                var settings = Settings.LoadDefaultSettings(Path.GetDirectoryName(path));
-                var packageSourceProvider = new PackageSourceProvider(settings);
-                var packageSources = packageSourceProvider.LoadPackageSources();
-                var resourceProviders = Repository.Provider.GetCoreV3();
-                var repositories = packageSources.Select(ps => Repository.CreateSource(resourceProviders, ps)).ToList();
-
-                foreach(var reference in await GetNuGetReferences(path))
-                    await GetAvailableVersions(reference.PackageId, reference.Version, usePrerelease, repositories);
+                await Process(options);
             }
-            catch(GracefulException gex)
+            catch (GracefulException gex)
             {
                 var errorConsole = Microsoft.DotNet.Cli.Utils.AnsiConsole.GetError();
                 errorConsole.WriteLine(AnsiColorExtensions.Red(gex.Message));
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex);
+                var errorConsole = Microsoft.DotNet.Cli.Utils.AnsiConsole.GetError();
+                errorConsole.WriteLine(AnsiColorExtensions.Yellow(ex.ToString()));
             }
         }
 
-        private static (bool, string) ParseArguments(string[] args)
+        private static async Task Process(PackageOptions options)
         {
-            bool prerelease = false;
-            string path = Directory.GetCurrentDirectory();
+            var path = options.SolutionOrProjectPath;
 
-            foreach(var arg in args)
+            if (Microsoft.DotNet.Tools.Common.PathUtility.IsDirectory(path))
+                path = GetSolutionOrProjectPath(path);
+
+            var repositories = GetSourceRepositories(path);
+            var projects = await GetProjectsAsync(path);
+            var tasks = new List<Task<UpdateStatus>>();
+
+            foreach(var project in projects)
+            foreach(var reference in project.Packages)
+                tasks.Add(GetPackageUpdateStatus(reference, options, project.Name, repositories));
+
+            var statuses = await Task.WhenAll(tasks);
+
+            var output = AnsiConsole.GetOutput();
+            foreach(var groupedStatus in statuses.GroupBy(s => s.ProjectName))
             {
-                switch(arg)
-                {
-                    case "--prerelease":
-                        prerelease = true;
-                        break;
-                }
+                output.WriteLine(groupedStatus.Key);
+
+                foreach(var status in groupedStatus.Where(s => s.UpdatedVersion != null).OrderBy(s => s.ProjectName))
+                    output.WriteLine($"\t{AnsiColorExtensions.Bold(status.PackageId)}: {status.CurrentVersion} -> {AnsiColorExtensions.White(status.UpdatedVersion.ToFullString())}");
             }
-
-            if(args.Length > 0)
-            {
-                var last = args[args.Length - 1];
-                path = Path.Combine(path, last);
-            }
-
-            if(Microsoft.DotNet.Tools.Common.PathUtility.IsDirectory(path))
-                path = GetProjectOrSolutionPath(path);
-
-            return (prerelease, path);
         }
 
-        private static string GetProjectOrSolutionPath(string path)
+        private static string GetSolutionOrProjectPath(string path)
         {
             var files = Directory.GetFiles(path, "*.sln").Concat(Directory.GetFiles(path, "*proj")).ToArray();
 
@@ -83,38 +93,73 @@ namespace Hjoellund.DotNet.Cli.Update
             return files[0];
         }
 
-        private static async Task<IEnumerable<NuGetReference>> GetNuGetReferences(string projectPath)
+        private static List<SourceRepository> GetSourceRepositories(string path)
         {
-            using(var stream = File.OpenRead(projectPath))
-            {
-                var document = await XDocument.LoadAsync(stream, LoadOptions.None, CancellationToken.None);
-                return from reference in document.Descendants("PackageReference")
-                       select new NuGetReference
-                       {
-                           PackageId = reference.Attribute("Include").Value,
-                           Version = NuGetVersion.Parse(reference.Attribute("Version").Value)
-                       };
-            }
+            var settings = Settings.LoadDefaultSettings(Path.GetDirectoryName(path));
+            var packageSourceProvider = new PackageSourceProvider(settings);
+            var packageSources = packageSourceProvider.LoadPackageSources();
+            var resourceProviders = Repository.Provider.GetCoreV3();
+
+            return packageSources.Select(ps => Repository.CreateSource(resourceProviders, ps)).ToList();
         }
 
-        private static async Task GetAvailableVersions(string packageId, NuGetVersion version, bool includePrerelease, IEnumerable<SourceRepository> repositories)
+        private static async Task<IEnumerable<Project>> GetProjectsAsync(string path)
+        {
+            if(path.EndsWith(".sln"))
+                return (await Solution.FromPathAsync(path)).Projects;
+
+            return new[]{ await Project.FromPathAsync(path) };
+        }
+
+        private static async Task<UpdateStatus> GetPackageUpdateStatus(PackageReference reference, PackageOptions options, string projectName, IEnumerable<SourceRepository> repositories)
         {
             ILogger logger = NuGet.Common.NullLogger.Instance;
 
             foreach(var repository in repositories)
             {
                 var metadataResource = await repository.GetResourceAsync<MetadataResource>();
-                var latestVersion = await metadataResource.GetLatestVersion(packageId, includePrerelease, false, NullLogger.Instance, CancellationToken.None);
+                var latestVersion = await metadataResource.GetLatestVersion(reference.PackageId, options.UsePreRelease, false, logger, CancellationToken.None);
 
                 if(latestVersion is null)
                     continue;
 
-                if(latestVersion > version)
-                    Console.WriteLine($"{packageId}: New version available ({latestVersion})");
-                else
-                    Console.WriteLine($"{packageId}: No new version found");
+                if(IsNewerWithConstraint(reference.Version, latestVersion, options.VersionConstraint))
+                    return new UpdateStatus
+                    {
+                        ProjectName = projectName,
+                        PackageId = reference.PackageId,
+                        CurrentVersion = reference.Version,
+                        UpdatedVersion = latestVersion
+                    };
 
-                break;
+                return new UpdateStatus
+                {
+                    ProjectName = projectName,
+                    PackageId = reference.PackageId,
+                    CurrentVersion = reference.Version
+                };
+            }
+
+            return new UpdateStatus
+            {
+                ProjectName = projectName,
+                PackageId = reference.PackageId,
+                CurrentVersion = reference.Version
+            };
+        }
+
+        private static bool IsNewerWithConstraint(NuGetVersion currentVersion, NuGetVersion latestVersion, VersionConstraint versionConstraint)
+        {
+            switch(versionConstraint)
+            {
+                case VersionConstraint.Major:
+                    return latestVersion > currentVersion;
+                case VersionConstraint.Minor:
+                    return latestVersion.Major == currentVersion.Major && latestVersion > currentVersion;
+                case VersionConstraint.Patch:
+                    return latestVersion.Major == currentVersion.Major && latestVersion.Minor == latestVersion.Minor && latestVersion > currentVersion;
+                default:
+                    throw new GracefulException($"Unknown version constraint encountered: {versionConstraint}");
             }
         }
     }
