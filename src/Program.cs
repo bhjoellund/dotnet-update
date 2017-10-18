@@ -20,13 +20,14 @@ namespace Hjoellund.DotNet.Cli.Update
     {
         static async Task Main(string[] args)
         {
-            var parser = new Parser(ps => {
+            var parser = new Parser(ps =>
+            {
                 ps.CaseInsensitiveEnumValues = true;
                 ps.CaseSensitive = true;
                 ps.HelpWriter = Console.Error;
                 ps.IgnoreUnknownArguments = false;
             });
-            switch(parser.ParseArguments<PackageOptions>(args))
+            switch (parser.ParseArguments<PackageOptions>(args))
             {
                 case NotParsed<PackageOptions> notParsed:
                     CommandLine.Text.HelpText.AutoBuild(notParsed);
@@ -57,7 +58,10 @@ namespace Hjoellund.DotNet.Cli.Update
 
         private static async Task Process(PackageOptions options)
         {
-            var path = options.SolutionOrProjectPath;
+            if (options.ShowUpdateList is false)
+                throw new GracefulException("Only list is supported for now");
+
+            string path = GetSearchPath(options);
 
             if (Microsoft.DotNet.Tools.Common.PathUtility.IsDirectory(path))
                 path = GetSolutionOrProjectPath(path);
@@ -66,32 +70,40 @@ namespace Hjoellund.DotNet.Cli.Update
             var projects = await GetProjectsAsync(path);
             var tasks = new List<Task<UpdateStatus>>();
 
-            foreach(var project in projects)
-            foreach(var reference in project.Packages)
-                tasks.Add(GetPackageUpdateStatus(reference, options, project.Name, repositories));
+            foreach (var project in projects)
+                foreach (var reference in project.Packages)
+                    tasks.Add(GetPackageUpdateStatus(reference, options, project.Name, repositories));
 
             var statuses = await Task.WhenAll(tasks);
 
             var output = AnsiConsole.GetOutput();
-            foreach(var groupedStatus in statuses.GroupBy(s => s.ProjectName))
+            foreach (var groupedStatus in statuses.GroupBy(s => s.ProjectName))
             {
                 output.WriteLine(groupedStatus.Key);
 
-                foreach(var status in groupedStatus.Where(s => s.UpdatedVersion != null).OrderBy(s => s.ProjectName))
+                foreach (var status in groupedStatus.Where(s => s.UpdatedVersion != null).OrderBy(s => s.ProjectName))
                     output.WriteLine($"\t{AnsiColorExtensions.Bold(status.PackageId)}: {status.CurrentVersion} -> {AnsiColorExtensions.White(status.UpdatedVersion.ToFullString())}");
             }
+        }
+
+        private static string GetSearchPath(PackageOptions options)
+        {
+            if (options.SolutionOrProjectPath is null)
+                return Directory.GetCurrentDirectory();
+
+            return Path.Combine(Directory.GetCurrentDirectory(), options.SolutionOrProjectPath);
         }
 
         private static string GetSolutionOrProjectPath(string path)
         {
             var files = Directory.GetFiles(path, "*.sln").Concat(Directory.GetFiles(path, "*proj")).ToArray();
 
-            if(files.Length == 0)
+            if (files.Length == 0)
                 throw new GracefulException($"Could not find a solution or project file in {path}");
-            
-            if(files.Length != 1)
+
+            if (files.Length != 1)
                 throw new GracefulException($"More than one solution and/or project file found in {path}");
-            
+
             return files[0];
         }
 
@@ -107,25 +119,25 @@ namespace Hjoellund.DotNet.Cli.Update
 
         private static async Task<IEnumerable<Project>> GetProjectsAsync(string path)
         {
-            if(path.EndsWith(".sln"))
+            if (path.EndsWith(".sln"))
                 return (await Solution.FromPathAsync(path)).Projects;
 
-            return new[]{ await Project.FromPathAsync(path) };
+            return new[] { await Project.FromPathAsync(path) };
         }
 
         private static async Task<UpdateStatus> GetPackageUpdateStatus(PackageReference reference, PackageOptions options, string projectName, IEnumerable<SourceRepository> repositories)
         {
-            ILogger logger = NuGet.Common.NullLogger.Instance;
+            ILogger logger = options.Verbose ? ConsoleLogger.Instance : NullLogger.Instance;
 
-            foreach(var repository in repositories)
+            foreach (var repository in repositories)
             {
                 var metadataResource = await repository.GetResourceAsync<MetadataResource>();
                 var latestVersion = await metadataResource.GetLatestVersion(reference.PackageId, options.UsePreRelease, false, logger, CancellationToken.None);
 
-                if(latestVersion is null)
+                if (latestVersion is null)
                     continue;
 
-                if(IsNewerWithConstraint(reference.Version, latestVersion, options.VersionConstraint))
+                if (IsNewerWithConstraint(reference.Version, latestVersion, options.VersionConstraint))
                     return new UpdateStatus
                     {
                         ProjectName = projectName,
@@ -152,7 +164,7 @@ namespace Hjoellund.DotNet.Cli.Update
 
         private static bool IsNewerWithConstraint(NuGetVersion currentVersion, NuGetVersion latestVersion, VersionConstraint versionConstraint)
         {
-            switch(versionConstraint)
+            switch (versionConstraint)
             {
                 case VersionConstraint.Major:
                     return latestVersion > currentVersion;

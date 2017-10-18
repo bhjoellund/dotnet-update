@@ -15,7 +15,7 @@ namespace Hjoellund.DotNet.Cli.Update.Models
 
         public static async Task<Project> FromPathAsync(string path)
         {
-            using(var stream = File.OpenRead(path))
+            using (var stream = File.OpenRead(path))
             {
                 var document = await XDocument.LoadAsync(stream, LoadOptions.None, CancellationToken.None);
                 return new Project
