@@ -81,8 +81,15 @@ namespace Hjoellund.DotNet.Cli.Update
             {
                 output.WriteLine(groupedStatus.Key);
 
+                bool hasUpdates = false;
                 foreach (var status in groupedStatus.Where(s => s.UpdatedVersion != null).OrderBy(s => s.ProjectName))
+                {
+                    hasUpdates = true;
                     output.WriteLine($"\t{AnsiColorExtensions.Bold(status.PackageId)}: {status.CurrentVersion} -> {AnsiColorExtensions.White(status.UpdatedVersion.ToFullString())}");
+                }
+
+                if(hasUpdates is false)
+                    output.WriteLine("\tNo package updates");
             }
         }
 
@@ -171,7 +178,7 @@ namespace Hjoellund.DotNet.Cli.Update
                 case VersionConstraint.Minor:
                     return latestVersion.Major == currentVersion.Major && latestVersion > currentVersion;
                 case VersionConstraint.Patch:
-                    return latestVersion.Major == currentVersion.Major && latestVersion.Minor == latestVersion.Minor && latestVersion > currentVersion;
+                    return latestVersion.Major == currentVersion.Major && latestVersion.Minor == currentVersion.Minor && latestVersion > currentVersion;
                 default:
                     throw new GracefulException($"Unknown version constraint encountered: {versionConstraint}");
             }
