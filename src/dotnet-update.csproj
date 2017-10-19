@@ -1,10 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <Title>NuGet updater for .NET CLI</Title>
+    <Description>A command-line extension to update NuGet packages for .NET Core 2+</Description>
     <OutputType>Exe</OutputType>
     <TargetFramework>netcoreapp2.0</TargetFramework>
     <LangVersion>7.1</LangVersion>
     <Version>0.0.1</Version>
     <Authors>Brian Hjøllund</Authors>
+    <PackageTags>dotnet-cli nuget update</PackageTags>
+    <RootNamespace>Hjoellund.DotNet.Cli.Update</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommandLineParser" Version="2.1.1-beta" />
